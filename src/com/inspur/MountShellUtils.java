@@ -1,6 +1,7 @@
 package com.inspur;
 
 import java.io.*;
+import java.util.concurrent.*;
 
 public class MountShellUtils {
     private static String LOCAL_SHELL_DIR = "/mountshells";
@@ -14,18 +15,76 @@ public class MountShellUtils {
     private static String MOUNT_SHELL_CLASSPATH="shell"+FILE_SPLIT_MARK+MOUNT_SHELL_NAME;
     private static String UMOUNT_SHELL_CLASSPATH="shell"+FILE_SPLIT_MARK+UMOUNT_SHELL_NAME;
 
-    public static void executeMount(String param1,String param2,String param3){
-        init();
-        String cmd = FULL_MOUNT_SHELL_PATH+" "+param1+" "+param2+" "+param3;
-        ProcessBuilder builder = new ProcessBuilder("/bin/sh","-c",cmd);
-        executeProcessBuilder(builder);
+    private static ThreadLocal<Process> lp = new ThreadLocal<Process>();
+
+    public static String executeMountWithMaxtime(final String param1,final String param2,long maxTime){
+        return executeMountWithMaxtime(param1,param2,"",maxTime);
     }
 
-    public static void executeUmount(String param1,String param2,String param3){
+    public static String executeUmountWithMaxtime(final String param1,final String param2,long maxTime){
+        return executeUmountWithMaxtime(param1,param2,"",maxTime);
+    }
+
+    public static String executeMountWithMaxtime(final String param1,final String param2,final String param3,long maxTime){
+        return executeWithMaxtime(param1,param2,param3,maxTime,"mount");
+    }
+
+    public static String executeUmountWithMaxtime(final String param1,final String param2,final String param3,long maxTime){
+        return executeWithMaxtime(param1,param2,param3,maxTime,"umount");
+    }
+
+    public static String executeWithMaxtime(final String param1,final String param2,final String param3,long maxTime,final String type){
+        String msg = "failed";
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        FutureTask<String> future =
+                new FutureTask<String>(new Callable<String>() {//使用Callable接口作为构造参数
+                    public String call() {
+                        if("mount".equals(type)){
+                            return MountShellUtils.executeMount(param1,param2,param3);
+                        }else{
+                            return MountShellUtils.executeUmount(param1,param2,param3);
+                        }
+                    }});
+        executor.execute(future);
+        try {
+            if(maxTime<=0l){
+                msg = future.get(); //取得结果，同时设置超时执行时间为5秒。同样可以用future.get()，不设置执行超时时间取得结果
+            }else{
+                msg = future.get(maxTime, TimeUnit.MILLISECONDS); //取得结果，同时设置超时执行时间为5秒。同样可以用future.get()，不设置执行超时时间取得结果
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            free();
+            future.cancel(true);
+        } finally {
+            executor.shutdown();
+        }
+        return msg;
+    }
+
+    public static String executeMount(String param1,String param2,String param3){
+        return execute(param1,param2,param3,"mount");
+    }
+
+    public static String executeUmount(String param1,String param2,String param3){
+        return execute(param1,param2,param3,"umount");
+    }
+
+    public static String execute(String param1,String param2,String param3,String type){
         init();
-        String cmd = FULL_UMOUNT_SHELL_PATH+" "+param1+" "+param2+" "+param3;
+        String cmd = FULL_MOUNT_SHELL_PATH+" "+param1+" "+param2;//+" "+param3;
+        if("umount".equals(type)){
+            cmd = FULL_UMOUNT_SHELL_PATH+" "+param1+" "+param2;//+" "+param3;
+        }
         ProcessBuilder builder = new ProcessBuilder("/bin/sh","-c",cmd);
-        executeProcessBuilder(builder);
+        System.out.println("脚本执行……"+cmd);
+        int ret = executeProcessBuilder(builder);
+        if(ret==0){
+            return "success";
+        }else{
+            return "failed";
+        }
+
     }
 
     private static void init(){
@@ -47,40 +106,32 @@ public class MountShellUtils {
         }
     }
 
-    private synchronized static void executeProcessBuilder(ProcessBuilder builder){
+    private synchronized static int executeProcessBuilder(ProcessBuilder builder){
         int runningStatus = 0;
         String s = null;
-        StringBuffer sb = new StringBuffer();
-        try {
-            Process p = builder.start();
+        Process p = null;
+        BufferedReader stdInput = null;
 
-            BufferedReader stdInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            BufferedReader stdError = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+        try {
+            //存在阻塞问题，不再打印builder.redirectErrorStream(true);
+            p = builder.start();
+            lp.set(p);
+
+            /*存在阻塞问题，不再打印stdInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
             while ((s = stdInput.readLine()) != null) {
                 System.out.println("shell System.out.println ...." + s);
-                sb.append(s);
-            }
-            while ((s = stdError.readLine()) != null) {
-                System.err.println("shell System.error.println...." + s);
-                sb.append(s);
-            }
-            try {
-                runningStatus = p.waitFor();
-            } catch (InterruptedException e) {
-                runningStatus = 1;
-                System.err.println("等待shell脚本执行状态时，报错...");
-                e.printStackTrace();
-                sb.append(e.getMessage());
-            }
-
-            closeStream(stdInput);
-            closeStream(stdError);
+            }*/
+            runningStatus = p.waitFor();
 
         } catch (Exception e) {
             System.err.println("执行shell脚本出错...");
             e.printStackTrace();
-            sb.append(e.getMessage());
             runningStatus =1;
+        }finally {
+            closeStream(stdInput);
+            if(p!=null){
+                p.destroy();
+            }
         }
         System.out.println("runningStatus = " + runningStatus);
         if(runningStatus == 0){
@@ -88,6 +139,7 @@ public class MountShellUtils {
         }else{
             System.out.println("失败");
         }
+        return runningStatus;
     }
 
     private synchronized static int fileCopy(String srcFilePathInClassPath, String destFilePath){
@@ -116,7 +168,15 @@ public class MountShellUtils {
                 reader.close();
             }
         } catch (Exception e) {
-            reader = null;
+            e.printStackTrace();
+        }
+    }
+
+    private static void free(){
+        System.out.println("free method execute");
+        if(lp.get()!=null){
+            System.out.println("process destroyed in free");
+            lp.get().destroy();
         }
     }
 }
