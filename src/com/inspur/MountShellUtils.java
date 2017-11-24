@@ -15,13 +15,15 @@ public class MountShellUtils {
     private static String MOUNT_SHELL_CLASSPATH="shell"+FILE_SPLIT_MARK+MOUNT_SHELL_NAME;
     private static String UMOUNT_SHELL_CLASSPATH="shell"+FILE_SPLIT_MARK+UMOUNT_SHELL_NAME;
 
-    private static Process singleProcess = null;
+    //private static ThreadLocal<Process> lp = new ThreadLocal<Process>();
 
-    public synchronized static String executeMountWithMaxtime(final String param1,final String param2,long maxTime){
+    private static Process lp = null;
+
+    public static String executeMountWithMaxtime(final String param1,final String param2,long maxTime){
         return executeMountWithMaxtime(param1,param2,"",maxTime);
     }
 
-    public synchronized static String executeUmountWithMaxtime(final String param1,final String param2,long maxTime){
+    public static String executeUmountWithMaxtime(final String param1,final String param2,long maxTime){
         return executeUmountWithMaxtime(param1,param2,"",maxTime);
     }
 
@@ -115,7 +117,9 @@ public class MountShellUtils {
         try {
             //存在阻塞问题，不再打印builder.redirectErrorStream(true);
             p = builder.start();
-            singleProcess = p;
+            //lp.set(p);
+
+            lp=p;
 
             /*存在阻塞问题，不再打印stdInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
             while ((s = stdInput.readLine()) != null) {
@@ -174,9 +178,13 @@ public class MountShellUtils {
 
     private static void free(){
         System.out.println("free method execute");
-        if(singleProcess!=null){
+        /*if(lp.get()!=null){
             System.out.println("process destroyed in free");
-            singleProcess.destroy();
+            lp.get().destroy();
+        }*/
+        if(lp!=null){
+            System.out.println("process destroyed in free");
+            lp.destroy();
         }
     }
 }
