@@ -15,7 +15,7 @@ mount $2 $1
 echo "msg:start edit /etc/fstab file..."
 temp=`echo $1|sed 's/\//\\\\\//g'`
 sed -i -r "s/(.*?$temp.*?)/#\1/" /etc/fstab
-sed -i "\$a $2 $1 ext4  default 1 0" /etc/fstab
+sed -i "\$a $2 $1 ext4  defaults 1 0" /etc/fstab
 
 #echo "msg:rm -rf $1/* .."
 #rm -rf $1/*
